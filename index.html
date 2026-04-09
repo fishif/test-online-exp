@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>吃豆人认知实验</title>
+    <style> 
+        body { margin:0; display:flex; flex-direction:column; align-items:center; background:#333; height:100vh; justify-content:center; font-family: Arial, sans-serif; }
+        canvas { border: 3px solid #555; background: #000; display: none; } /* 初始隐藏 */
+        .screen { color: white; text-align: center; max-width: 600px; }
+        button { padding: 10px 20px; font-size: 20px; cursor: pointer; margin-top: 20px; }
+        h2 { color: #ffcc00; }
+    </style>
+</head>
+<body>
+
+    <!-- 1. 欢迎界面 -->
+    <div id="welcomeScreen" class="screen">
+        <h2>吃豆人认知实验</h2>
+        <p>你将有 30 秒的时间在迷宫中移动。</p>
+        <p>请使用 <b>方向键 (↑ ↓ ← →)</b> 控制黄色圆球。</p>
+        <button onclick="startExperiment()">开始实验</button>
+    </div>
+
+    <!-- 2. 游戏界面 -->
+    <canvas id="gameCanvas" width="800" height="600"></canvas>
+    <div id="timerDisplay" style="color:white; font-size:24px; display:none; position: absolute; top: 20px;">剩余时间: 30s</div>
+
+    <!-- 3. 结束界面 -->
+    <div id="endScreen" class="screen" style="display:none;">
+        <h2>实验结束！</h2>
+        <p>感谢您的参与。数据正在自动下载...</p>
+        <p>如果没有自动下载，请点击下方按钮。</p>
+        <button onclick="downloadData()">手动下载数据</button>
+    </div>
+
+<script>
+// --- 全局变量 ---
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+const welcomeScreen = document.getElementById('welcomeScreen');
+const endScreen = document.getElementById('endScreen');
+const timerDisplay = document.getElementById('timerDisplay');
+
+let gameState = {
+    isRunning: false,
+    player: { x: 400, y: 300, radius: 20, speed: 5 },
+    keys: {},
+    startTime: 0,
+    duration: 2000, // 30秒
+    dataLog: [] // 用来存数据
+};
+
+// 迷宫墙
+const walls = [
+    {x: 50, y: 50, w: 700, h: 20},
+    {x: 50, y: 530, w: 700, h: 20},
+    {x: 50, y: 50, w: 20, h: 500},
+    {x: 730, y: 50, w: 20, h: 500},
+    {x: 300, y: 150, w: 20, h: 200},
+    {x: 500, y: 250, w: 20, h: 200}
+];
+
+// --- 键盘监听 ---
+window.addEventListener('keydown', (e) => { 
+    if(['ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.key)){
+        e.preventDefault(); // 防止网页滚动
+    }
+    gameState.keys[e.key] = true; 
+});
+window.addEventListener('keyup', (e) => { gameState.keys[e.key] = false; });
+
+// --- 核心逻辑 ---
+
+function startExperiment() {
+    // 切换界面
+    welcomeScreen.style.display = 'none';
+    canvas.style.display = 'block';
+    timerDisplay.style.display = 'block';
+    
+    // 初始化
+    gameState.isRunning = true;
+    gameState.startTime = Date.now();
+    gameState.dataLog = []; // 清空旧数据
+    
+    // 开始循环
+    requestAnimationFrame(gameLoop);
+}
+
+function gameLoop() {
+    if (!gameState.isRunning) return;
+
+    const elapsed = Date.now() - gameState.startTime;
+    const timeLeft = Math.max(0, Math.ceil((gameState.duration - elapsed) / 1000));
+    timerDisplay.innerText = `剩余时间: ${timeLeft}s`;
+
+    // 1. 记录数据 (每100ms记录一次，或者每帧都记)
+    // 这里为了数据不太大，我们每5帧记一次，或者每次按键记
+    // 简单起见：每帧都记时间和坐标
+    logData(elapsed);
+
+    // 2. 移动逻辑
+    let nextX = gameState.player.x;
+    let nextY = gameState.player.y;
+    if (gameState.keys['ArrowLeft']) nextX -= gameState.player.speed;
+    if (gameState.keys['ArrowRight']) nextX += gameState.player.speed;
+    if (gameState.keys['ArrowUp']) nextY -= gameState.player.speed;
+    if (gameState.keys['ArrowDown']) nextY += gameState.player.speed;
+
+    // 3. 碰撞检测
+    if (!checkWallCollision(nextX, nextY)) {
+        gameState.player.x = nextX;
+        gameState.player.y = nextY;
+    }
+
+    // 4. 画图
+    draw();
+
+    // 5. 检查是否结束
+    if (elapsed >= gameState.duration) {
+        endExperiment();
+    } else {
+        requestAnimationFrame(gameLoop);
+    }
+}
+
+function logData(timeMs) {
+    gameState.dataLog.push({
+        timestamp: timeMs,
+        x: Math.round(gameState.player.x),
+        y: Math.round(gameState.player.y)
+    });
+}
+
+function endExperiment() {
+    gameState.isRunning = false;
+    canvas.style.display = 'none';
+    timerDisplay.style.display = 'none';
+    endScreen.style.display = 'block';
+    
+    // 自动下载
+    setTimeout(downloadData, 500);
+}
+
+// --- 绘图与碰撞 ---
+function draw() {
+    // 清空
+    ctx.fillStyle = '#000';
+    ctx.fillRect(0,0,canvas.width, canvas.height);
+    
+    // 画墙
+    ctx.fillStyle = '#3498db';
+    walls.forEach(w => ctx.fillRect(w.x, w.y, w.w, w.h));
+    
+    // 画人
+    ctx.beginPath();
+    ctx.arc(gameState.player.x, gameState.player.y, gameState.player.radius, 0, Math.PI*2);
+    ctx.fillStyle = '#ffff00';
+    ctx.fill();
+}
+
+function checkWallCollision(x, y) {
+    const r = gameState.player.radius;
+    for (let w of walls) {
+        // 简单的矩形碰撞
+        if (x + r > w.x && x - r < w.x + w.w &&
+            y + r > w.y && y - r < w.y + w.h) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// --- 数据下载功能 (核心) ---
+function downloadData() {
+    // 1. 把数据数组转换成 CSV 格式
+    let csvContent = "data:text/csv;charset=utf-8,";
+    csvContent += "Time_ms,Pos_X,Pos_Y\n"; // 表头
+    
+    gameState.dataLog.forEach(row => {
+        csvContent += `${row.timestamp},${row.x},${row.y}\n`;
+    });
+
+    // 2. 创建下载链接
+    const encodedUri = encodeURI(csvContent);
+    const link = document.createElement("a");
+    link.setAttribute("href", encodedUri);
+    link.setAttribute("download", "pacman_experiment_data.csv"); // 文件名
+    document.body.appendChild(link);
+    
+    // 3. 触发点击
+    link.click();
+    document.body.removeChild(link);
+}
+
+</script>
+</body>
+</html>

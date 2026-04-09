@@ -1,196 +1,467 @@
 <!DOCTYPE html>
-<html>
+<html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
-    <title>吃豆人认知实验</title>
-    <style> 
-        body { margin:0; display:flex; flex-direction:column; align-items:center; background:#333; height:100vh; justify-content:center; font-family: Arial, sans-serif; }
-        canvas { border: 3px solid #555; background: #000; display: none; } /* 初始隐藏 */
-        .screen { color: white; text-align: center; max-width: 600px; }
-        button { padding: 10px 20px; font-size: 20px; cursor: pointer; margin-top: 20px; }
-        h2 { color: #ffcc00; }
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>积木复现任务 (COPY_U)</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background: #333;
+            font-family: Arial, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            color: white;
+            user-select: none;
+        }
+        #topBar {
+            display: flex;
+            justify-content: space-between;
+            width: 1000px;
+            padding: 15px;
+            font-size: 20px;
+        }
+        canvas {
+            border: 2px solid #555;
+            background: #fff;
+            cursor: crosshair;
+        }
+        #status {
+            margin-top: 10px;
+            font-size: 18px;
+            color: #ffcc00;
+        }
+        .hidden { display: none; }
+        #endScreen {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: #222;
+            padding: 40px;
+            border-radius: 10px;
+            text-align: center;
+            border: 2px solid #ffcc00;
+        }
+        button {
+            padding: 10px 25px;
+            font-size: 18px;
+            background: #ffcc00;
+            border: none;
+            cursor: pointer;
+            margin-top: 20px;
+        }
     </style>
 </head>
 <body>
 
-    <!-- 1. 欢迎界面 -->
-    <div id="welcomeScreen" class="screen">
-        <h2>吃豆人认知实验</h2>
-        <p>你将有 30 秒的时间在迷宫中移动。</p>
-        <p>请使用 <b>方向键 (↑ ↓ ← →)</b> 控制黄色圆球。</p>
-        <button onclick="startExperiment()">开始实验</button>
-    </div>
+<div id="topBar">
+    <div id="scoreDisplay">Score: 0</div>
+    <div id="remainDisplay">Remain: 6</div>
+    <div id="timeDisplay">Time: 30</div>
+</div>
 
-    <!-- 2. 游戏界面 -->
-    <canvas id="gameCanvas" width="800" height="600"></canvas>
-    <div id="timerDisplay" style="color:white; font-size:24px; display:none; position: absolute; top: 20px;">剩余时间: 30s</div>
+<canvas id="gameCanvas" width="1000" height="700"></canvas>
+<div id="status">左键点击右侧积木选择，再点击中间放置；右键查看目标</div>
 
-    <!-- 3. 结束界面 -->
-    <div id="endScreen" class="screen" style="display:none;">
-        <h2>实验结束！</h2>
-        <p>感谢您的参与。数据正在自动下载...</p>
-        <p>如果没有自动下载，请点击下方按钮。</p>
-        <button onclick="downloadData()">手动下载数据</button>
-    </div>
+<div id="endScreen" class="hidden">
+    <h2>实验结束！</h2>
+    <p>数据正在自动下载...</p>
+    <button onclick="downloadData()">手动下载数据</button>
+    <button onclick="location.reload()" style="margin-left:10px; background:#ccc;">重新开始</button>
+</div>
 
 <script>
-// --- 全局变量 ---
+// ==========================================
+// 1. 配置与常量 (复刻 Python 版逻辑)
+// ==========================================
 const canvas = document.getElementById('gameCanvas');
 const ctx = canvas.getContext('2d');
-const welcomeScreen = document.getElementById('welcomeScreen');
-const endScreen = document.getElementById('endScreen');
-const timerDisplay = document.getElementById('timerDisplay');
 
-let gameState = {
-    isRunning: false,
-    player: { x: 400, y: 300, radius: 20, speed: 5 },
-    keys: {},
-    startTime: 0,
-    duration: 2000, // 30秒
-    dataLog: [] // 用来存数据
+// 格子配置
+const CELL_SIZE = 40;
+const GRID_COLS = 21;
+const GRID_ROWS = 7;
+const OFFSET_X = (canvas.width - GRID_COLS * CELL_SIZE) / 2;
+const OFFSET_Y = (canvas.height - GRID_ROWS * CELL_SIZE) / 2;
+
+// 区域定义 (Cell 索引)
+const REGIONS = {
+    model: { start: {r:3, c:5}, end: {r:5, c:7} },
+    workspace: { start: {r:3, c:10}, end: {r:5, c:12} },
+    resource: { start: {r:3, c:15}, end: {r:5, c:17} }
 };
 
-// 迷宫墙
-const walls = [
-    {x: 50, y: 50, w: 700, h: 20},
-    {x: 50, y: 530, w: 700, h: 20},
-    {x: 50, y: 50, w: 20, h: 500},
-    {x: 730, y: 50, w: 20, h: 500},
-    {x: 300, y: 150, w: 20, h: 200},
-    {x: 500, y: 250, w: 20, h: 200}
+// 积木形状库 (来自 Python vertices_pool)
+const VERTICES_POOL = [
+    [[-0.32, 0.18], [-0.06, 0.48], [0.26, 0.20], [0.18, -0.40], [-0.30, -0.34]],
+    [[-0.36, -0.02], [-0.20, 0.36], [-0.02, 0.48], [0.10, 0.26], [0.30, 0.44], [0.36, -0.14], [0.00, -0.46]],
+    [[-0.34, 0.26], [-0.06, 0.46], [0.30, 0.34], [0.12, 0.08], [0.34, -0.18], [-0.02, -0.46], [-0.34, -0.14]],
+    [[-0.30, 0.42], [0.06, 0.46], [0.34, 0.18], [0.30, -0.10], [0.10, -0.04], [0.00, -0.40], [-0.14, -0.02], [-0.36, 0.00]],
+    [[-0.38, 0.06], [-0.16, 0.44], [0.06, 0.10], [0.26, 0.46], [0.38, -0.06], [0.08, -0.18], [-0.02, -0.46], [-0.24, -0.22]],
+    [[-0.36, 0.18], [-0.12, 0.46], [0.10, 0.40], [0.34, 0.08], [0.20, -0.36], [-0.06, -0.46], [-0.18, -0.10], [-0.30, -0.24]],
+    [[-0.34, 0.34], [-0.10, 0.18], [0.00, 0.48], [0.16, 0.16], [0.34, 0.30], [0.30, -0.16], [0.06, -0.46], [-0.22, -0.32], [-0.36, 0.00]],
+    [[-0.32, 0.38], [0.00, 0.46], [0.30, 0.24], [0.36, -0.04], [0.16, -0.10], [0.28, -0.40], [-0.06, -0.46], [-0.36, -0.12]],
+    [[-0.20, 0.46], [0.04, 0.30], [0.22, 0.48], [0.34, 0.12], [0.12, -0.12], [0.30, -0.42], [-0.02, -0.46], [-0.28, -0.20], [-0.36, 0.16]]
 ];
 
-// --- 键盘监听 ---
-window.addEventListener('keydown', (e) => { 
-    if(['ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.key)){
-        e.preventDefault(); // 防止网页滚动
+// ==========================================
+// 2. 状态管理
+// ==========================================
+let state = {
+    viewMode: 'workspace_resource', // 'workspace_resource' or 'model_only'
+    selectedBrick: null, // {index, data}
+    modelBricks: {},     // key: "r,c"
+    resourceBricks: {},  // key: "r,c"
+    workspaceBricks: {}, // key: "r,c"
+    score: 0,
+    startTime: Date.now(),
+    trialTime: 30,
+    logs: []
+};
+
+// ==========================================
+// 3. 工具函数
+// ==========================================
+function hsvToRgb(h, s, v) {
+    s /= 100; v /= 100;
+    let f = (n, k=(n+h/60)%6) => v - v*s*Math.max(Math.min(k,4-k,1),0);
+    return [Math.round(f(5)*255), Math.round(f(3)*255), Math.round(f(1)*255)];
+}
+
+function rotatePoint(x, y, angleDeg) {
+    let rad = angleDeg * Math.PI / 180;
+    return {
+        x: x * Math.cos(rad) - y * Math.sin(rad),
+        y: x * Math.sin(rad) + y * Math.cos(rad)
+    };
+}
+
+function getCellFromMouse(mx, my) {
+    let c = Math.floor((mx - OFFSET_X) / CELL_SIZE) + 1;
+    let r = Math.floor((my - OFFSET_Y) / CELL_SIZE) + 1;
+    if (r >= 1 && r <= GRID_ROWS && c >= 1 && c <= GRID_COLS) {
+        return {r, c};
     }
-    gameState.keys[e.key] = true; 
-});
-window.addEventListener('keyup', (e) => { gameState.keys[e.key] = false; });
+    return null;
+}
 
-// --- 核心逻辑 ---
+function getCellCenter(r, c) {
+    return {
+        x: OFFSET_X + (c - 1) * CELL_SIZE + CELL_SIZE / 2,
+        y: OFFSET_Y + (r - 1) * CELL_SIZE + CELL_SIZE / 2
+    };
+}
 
-function startExperiment() {
-    // 切换界面
-    welcomeScreen.style.display = 'none';
-    canvas.style.display = 'block';
-    timerDisplay.style.display = 'block';
-    
-    // 初始化
-    gameState.isRunning = true;
-    gameState.startTime = Date.now();
-    gameState.dataLog = []; // 清空旧数据
-    
-    // 开始循环
+function isInRegion(r, c, regionName) {
+    let reg = REGIONS[regionName];
+    return r >= reg.start.r && r <= reg.end.r && c >= reg.start.c && c <= reg.end.c;
+}
+
+// ==========================================
+// 4. 初始化实验 (生成积木)
+// ==========================================
+function initExperiment() {
+    // 生成颜色、角度、形状
+    let hs = [];
+    let step = 40;
+    let startH = Math.floor(Math.random() * step);
+    for(let i=startH; i<360; i+=step) hs.push(i);
+    hs = hs.slice(0,9).sort(() => Math.random() - 0.5);
+
+    let oris = [];
+    step = 20;
+    let startO = Math.floor(Math.random() * step);
+    for(let i=startO; i<180; i+=step) oris.push(i);
+    oris = oris.slice(0,9).sort(() => Math.random() - 0.5);
+
+    let shapes = [...VERTICES_POOL].sort(() => Math.random() - 0.5);
+    let rewards = [5,5,5,1,1,1].sort(() => Math.random() - 0.5);
+
+    // 获取区域格子列表
+    let getRegionCells = (reg) => {
+        let cells = [];
+        for(let r=reg.start.r; r<=reg.end.r; r++)
+            for(let c=reg.start.c; c<=reg.end.c; c++)
+                cells.push({r,c});
+        return cells.sort(() => Math.random() - 0.5);
+    };
+
+    let modelCells = getRegionCells(REGIONS.model);
+    let resourceCells = getRegionCells(REGIONS.resource);
+
+    // 生成 Model 积木 (6个)
+    for(let i=0; i<6; i++) {
+        let pos = modelCells[i];
+        let key = `${pos.r},${pos.c}`;
+        state.modelBricks[key] = {
+            vertices: shapes[i],
+            color: hsvToRgb(hs[i], 100, 100),
+            ori: oris[i],
+            reward: rewards[i],
+            shapeIdx: i
+        };
+    }
+
+    // 生成 Resource 积木 (9个)
+    for(let i=0; i<9; i++) {
+        let pos = resourceCells[i];
+        let key = `${pos.r},${pos.c}`;
+        state.resourceBricks[key] = {
+            vertices: shapes[i],
+            color: hsvToRgb(hs[i], 100, 100),
+            ori: oris[i],
+            shapeIdx: i
+        };
+    }
+
+    state.startTime = Date.now();
     requestAnimationFrame(gameLoop);
 }
 
-function gameLoop() {
-    if (!gameState.isRunning) return;
+// ==========================================
+// 5. 绘图函数
+// ==========================================
+function drawGrid() {
+    // 画背景格子
+    for(let r=1; r<=GRID_ROWS; r++) {
+        for(let c=1; c<=GRID_COLS; c++) {
+            let x = OFFSET_X + (c-1)*CELL_SIZE;
+            let y = OFFSET_Y + (r-1)*CELL_SIZE;
+            
+            // 区域颜色
+            let color = '#7f7f7f'; // 默认灰色
+            if (state.viewMode === 'workspace_resource') {
+                if (isInRegion(r,c,'workspace') || isInRegion(r,c,'resource')) color = '#d2d2d2';
+            } else {
+                if (isInRegion(r,c,'model')) color = '#d2d2d2';
+            }
 
-    const elapsed = Date.now() - gameState.startTime;
-    const timeLeft = Math.max(0, Math.ceil((gameState.duration - elapsed) / 1000));
-    timerDisplay.innerText = `剩余时间: ${timeLeft}s`;
-
-    // 1. 记录数据 (每100ms记录一次，或者每帧都记)
-    // 这里为了数据不太大，我们每5帧记一次，或者每次按键记
-    // 简单起见：每帧都记时间和坐标
-    logData(elapsed);
-
-    // 2. 移动逻辑
-    let nextX = gameState.player.x;
-    let nextY = gameState.player.y;
-    if (gameState.keys['ArrowLeft']) nextX -= gameState.player.speed;
-    if (gameState.keys['ArrowRight']) nextX += gameState.player.speed;
-    if (gameState.keys['ArrowUp']) nextY -= gameState.player.speed;
-    if (gameState.keys['ArrowDown']) nextY += gameState.player.speed;
-
-    // 3. 碰撞检测
-    if (!checkWallCollision(nextX, nextY)) {
-        gameState.player.x = nextX;
-        gameState.player.y = nextY;
+            ctx.fillStyle = color;
+            ctx.fillRect(x, y, CELL_SIZE, CELL_SIZE);
+            ctx.strokeStyle = '#fff';
+            ctx.lineWidth = 1;
+            ctx.strokeRect(x, y, CELL_SIZE, CELL_SIZE);
+        }
     }
 
-    // 4. 画图
-    draw();
+    // 画区域边界
+    ctx.strokeStyle = '#000';
+    ctx.lineWidth = 3;
+    Object.values(REGIONS).forEach(reg => {
+        let x = OFFSET_X + (reg.start.c - 1) * CELL_SIZE;
+        let y = OFFSET_Y + (reg.start.r - 1) * CELL_SIZE;
+        let w = (reg.end.c - reg.start.c + 1) * CELL_SIZE;
+        let h = (reg.end.r - reg.start.r + 1) * CELL_SIZE;
+        ctx.strokeRect(x, y, w, h);
+    });
+}
 
-    // 5. 检查是否结束
-    if (elapsed >= gameState.duration) {
+function drawBrick(brick, r, c, isSelected=false) {
+    let center = getCellCenter(r, c);
+    let scale = CELL_SIZE * 0.8;
+
+    ctx.save();
+    ctx.translate(center.x, center.y);
+    ctx.rotate(brick.ori * Math.PI / 180);
+
+    // 画多边形
+    ctx.beginPath();
+    brick.vertices.forEach((v, i) => {
+        let x = v[0] * scale;
+        let y = v[1] * scale; // Canvas y轴向下
+        if(i===0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+    });
+    ctx.closePath();
+
+    ctx.fillStyle = `rgb(${brick.color[0]},${brick.color[1]},${brick.color[2]})`;
+    ctx.fill();
+    ctx.strokeStyle = isSelected ? '#ff0000' : '#fff';
+    ctx.lineWidth = isSelected ? 4 : 2;
+    ctx.stroke();
+
+    ctx.restore();
+}
+
+function drawSelectionHighlight(r, c, color='#ffff00') {
+    let x = OFFSET_X + (c-1)*CELL_SIZE;
+    let y = OFFSET_Y + (r-1)*CELL_SIZE;
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 5;
+    ctx.strokeRect(x+2, y+2, CELL_SIZE-4, CELL_SIZE-4);
+}
+
+// ==========================================
+// 6. 主循环
+// ==========================================
+function gameLoop() {
+    // 清空
+    ctx.fillStyle = '#fff';
+    ctx.fillRect(0,0,canvas.width,canvas.height);
+
+    drawGrid();
+
+    // 画积木
+    let bricksToDraw = {};
+    if (state.viewMode === 'workspace_resource') {
+        Object.assign(bricksToDraw, state.resourceBricks, state.workspaceBricks);
+    } else {
+        Object.assign(bricksToDraw, state.modelBricks);
+    }
+
+    Object.entries(bricksToDraw).forEach(([key, brick]) => {
+        let [r, c] = key.split(',').map(Number);
+        let isSelected = state.selectedBrick && state.selectedBrick.key === key;
+        drawBrick(brick, r, c, isSelected);
+    });
+
+    // 画选中框
+    if (state.selectedBrick && state.viewMode === 'workspace_resource') {
+        let [r, c] = state.selectedBrick.key.split(',').map(Number);
+        drawSelectionHighlight(r, c);
+    }
+
+    // 更新UI
+    let elapsed = Math.floor((Date.now() - state.startTime) / 1000);
+    let remain = Math.max(0, 30 - elapsed);
+    document.getElementById('timeDisplay').innerText = `Time: ${remain}`;
+    document.getElementById('scoreDisplay').innerText = `Score: ${state.score}`;
+    document.getElementById('remainDisplay').innerText = `Remain: ${6 - Object.keys(state.workspaceBricks).length}`;
+
+    if (remain <= 0 && !document.getElementById('endScreen').classList.contains('hidden') === false) {
         endExperiment();
     } else {
         requestAnimationFrame(gameLoop);
     }
 }
 
-function logData(timeMs) {
-    gameState.dataLog.push({
-        timestamp: timeMs,
-        x: Math.round(gameState.player.x),
-        y: Math.round(gameState.player.y)
-    });
-}
+// ==========================================
+// 7. 交互处理
+// ==========================================
+canvas.addEventListener('mousedown', (e) => {
+    let rect = canvas.getBoundingClientRect();
+    let mx = e.clientX - rect.left;
+    let my = e.clientY - rect.top;
+    let cell = getCellFromMouse(mx, my);
 
-function endExperiment() {
-    gameState.isRunning = false;
-    canvas.style.display = 'none';
-    timerDisplay.style.display = 'none';
-    endScreen.style.display = 'block';
-    
-    // 自动下载
-    setTimeout(downloadData, 500);
-}
+    // 记录日志
+    let logEvent = (type, data={}) => {
+        state.logs.push({
+            time: Date.now() - state.startTime,
+            event: type,
+            mouseX: mx,
+            mouseY: my,
+            cell: cell ? `${cell.r},${cell.c}` : null,
+            ...data
+        });
+    };
 
-// --- 绘图与碰撞 ---
-function draw() {
-    // 清空
-    ctx.fillStyle = '#000';
-    ctx.fillRect(0,0,canvas.width, canvas.height);
-    
-    // 画墙
-    ctx.fillStyle = '#3498db';
-    walls.forEach(w => ctx.fillRect(w.x, w.y, w.w, w.h));
-    
-    // 画人
-    ctx.beginPath();
-    ctx.arc(gameState.player.x, gameState.player.y, gameState.player.radius, 0, Math.PI*2);
-    ctx.fillStyle = '#ffff00';
-    ctx.fill();
-}
+    // 右键：切换视图
+    if (e.button === 2) {
+        e.preventDefault();
+        if (state.viewMode === 'workspace_resource') {
+            state.viewMode = 'model_only';
+            logEvent('toggle_model');
+        } else {
+            state.viewMode = 'workspace_resource';
+            logEvent('toggle_workspace');
+        }
+        state.selectedBrick = null;
+        return;
+    }
 
-function checkWallCollision(x, y) {
-    const r = gameState.player.radius;
-    for (let w of walls) {
-        // 简单的矩形碰撞
-        if (x + r > w.x && x - r < w.x + w.w &&
-            y + r > w.y && y - r < w.y + w.h) {
-            return true;
+    // 左键：操作
+    if (e.button === 0 && state.viewMode === 'workspace_resource') {
+        if (!cell) return;
+
+        let key = `${cell.r},${cell.c}`;
+
+        // 1. 点击 Resource 选积木
+        if (isInRegion(cell.r, cell.c, 'resource') && state.resourceBricks[key]) {
+            state.selectedBrick = { key, data: state.resourceBricks[key] };
+            logEvent('select_resource', {brick_idx: state.resourceBricks[key].shapeIdx});
+            document.getElementById('status').innerText = `已选择积木，请点击中间 Workspace 放置`;
+        }
+        // 2. 点击 Workspace 放积木
+        else if (isInRegion(cell.r, cell.c, 'workspace')) {
+            if (!state.selectedBrick) {
+                logEvent('place_fail', {reason: 'no_selection'});
+                document.getElementById('status').innerText = `请先从右侧选择积木！`;
+                return;
+            }
+            if (state.workspaceBricks[key]) {
+                logEvent('place_fail', {reason: 'occupied'});
+                document.getElementById('status').innerText = `该位置已有积木！`;
+                return;
+            }
+            if (Object.keys(state.workspaceBricks).length >= 6) {
+                 logEvent('place_fail', {reason: 'full'});
+                 return;
+            }
+
+            // 放置积木
+            state.workspaceBricks[key] = {...state.selectedBrick.data};
+            
+            // 计算是否正确 (对应 Model 位置)
+            let correct = false;
+            let reward = 0;
+            // 计算对应 Model 的坐标偏移
+            let offset_c = REGIONS.model.start.c - REGIONS.workspace.start.c;
+            let modelKey = `${cell.r},${cell.c + offset_c}`;
+            
+            if (state.modelBricks[modelKey]) {
+                let mb = state.modelBricks[modelKey];
+                let wb = state.workspaceBricks[key];
+                if (mb.shapeIdx === wb.shapeIdx) { // 形状颜色角度都匹配 (这里用shapeIdx简化判断)
+                    correct = true;
+                    reward = mb.reward;
+                    state.score += reward;
+                }
+            }
+
+            logEvent('place_brick', {correct: correct, reward: reward});
+            document.getElementById('status').innerText = correct ? `放置正确！+${reward}分` : `放置完毕`;
+            
+            state.selectedBrick = null;
+
+            // 检查是否完成
+            if (Object.keys(state.workspaceBricks).length === 6) {
+                setTimeout(endExperiment, 500);
+            }
         }
     }
-    return false;
+});
+
+// 禁用右键菜单
+canvas.addEventListener('contextmenu', e => e.preventDefault());
+
+// ==========================================
+// 8. 结束与数据下载
+// ==========================================
+function endExperiment() {
+    document.getElementById('endScreen').classList.remove('hidden');
+    downloadData();
 }
 
-// --- 数据下载功能 (核心) ---
 function downloadData() {
-    // 1. 把数据数组转换成 CSV 格式
-    let csvContent = "data:text/csv;charset=utf-8,";
-    csvContent += "Time_ms,Pos_X,Pos_Y\n"; // 表头
-    
-    gameState.dataLog.forEach(row => {
-        csvContent += `${row.timestamp},${row.x},${row.y}\n`;
+    let csv = "Time_ms,Event,Mouse_X,Mouse_Y,Cell,Details\n";
+    state.logs.forEach(row => {
+        let details = JSON.stringify(row); // 把额外信息存成JSON字符串
+        csv += `${row.time},${row.event},${row.mouseX},${row.mouseY},${row.cell || ''},"${details}"\n`;
     });
 
-    // 2. 创建下载链接
-    const encodedUri = encodeURI(csvContent);
-    const link = document.createElement("a");
-    link.setAttribute("href", encodedUri);
-    link.setAttribute("download", "pacman_experiment_data.csv"); // 文件名
-    document.body.appendChild(link);
-    
-    // 3. 触发点击
+    let blob = new Blob([csv], {type: 'text/csv;charset=utf-8;'});
+    let link = document.createElement("a");
+    link.href = URL.createObjectURL(blob);
+    link.download = "copy_u_experiment_data.csv";
     link.click();
-    document.body.removeChild(link);
 }
+
+// 启动
+initExperiment();
 
 </script>
 </body>
